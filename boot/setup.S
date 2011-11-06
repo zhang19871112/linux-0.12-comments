@@ -15,9 +15,9 @@
 ! NOTE! These had better be the same as in bootsect.s!
 #include <linux/config.h>
 
-INITSEG  = DEF_INITSEG	! we move boot here - out of the way
-SYSSEG   = DEF_SYSSEG	! system loaded at 0x10000 (65536).
-SETUPSEG = DEF_SETUPSEG	! this is the current segment
+INITSEG  = DEF_INITSEG	! we move boot here - out of the way, 0x9000
+SYSSEG   = DEF_SYSSEG	! system loaded at 0x10000 (65536). 0x1000
+SETUPSEG = DEF_SETUPSEG	! this is the current segment, 0x9020
 
 .globl begtext, begdata, begbss, endtext, enddata, endbss
 .text
@@ -33,29 +33,35 @@ start:
 
 ! ok, the read went well so we get current cursor position and save it for
 ! posterity.
-
+	! 数据段寄存器的段值设置为0x9000
 	mov	ax,#INITSEG	! this is done in bootsect already, but...
 	mov	ds,ax
 
 ! Get memory size (extended mem, kB)
-
+	! TODO, BIOS的0x15号中断, 功能号0x88取系统所含扩展内存大小
+	! 返回: ax=从0x100000(1M)处开始的扩展内存大小(KB), 若出错
+	! 则CF置位, ax=出错码.
 	mov	ah,#0x88
 	int	0x15
-	mov	[2],ax
+	mov	[2],ax		! 扩展内存的大小放在0x9000:2处
 
 ! check for EGA/VGA and some config parameters
-
+	! 检查显示方式(EGA/VGA)并取参数.
+	! TODO, BIOS的0x10号中断, 功能号0x12, bl=0x10
+	! 返回: bh=显示状态, cx=显示卡特性参数
 	mov	ah,#0x12
 	mov	bl,#0x10
 	int	0x10
 	mov	[8],ax
-	mov	[10],bx
-	mov	[12],cx
-	mov	ax,#0x5019
-	cmp	bl,#0x10
+	mov	[10],bx		! 0x9000A存放安装的显示内存,0x9000B存放显示状态
+	mov	[12],cx		! 0x9000C存放显示卡特性参数
+	mov	ax,#0x5019	! 在ax中预置屏幕默认的行列值(ah=0x50即80列, al=0x19即25行)
+	cmp	bl,#0x10	! 若中断返回bl值为0x10,则表示不是VGA显卡，是的话会返回显存大小
 	je	novga
-	call	chsvga
-novga:	mov	[14],ax
+	call	chsvga		! 是VGA显卡,检测显示卡厂家和类型，修改显示行列值
+novga:	mov	[14],ax		! 0x9000E,0x9000F分别存放屏幕当前的行列值(0x5019)
+	! TODO,利用BIOS的0x10号中断,功能号0x03，
+	! 返回: ch=扫描开始线,cl=扫描结束线；dh=行号，dl=列号(0x00为最左边)
 	mov	ah,#0x03	! read cursor pos
 	xor	bh,bh
 	int	0x10		! save it in known place, con_init fetches
@@ -65,18 +71,21 @@ novga:	mov	[14],ax
 	
 	mov	ah,#0x0f
 	int	0x10
-	mov	[4],bx		! bh = display page
-	mov	[6],ax		! al = video mode, ah = window width
+	mov	[4],bx		! bh = display page, 0x90004存放当前页
+	mov	[6],ax		! al = video mode, ah = window width, 0x90006存放显示模式, 0x90007存放字符列数
 
 ! Get hd0 data
-
+	! 取第一个硬盘的参数值(复制硬盘参数表)
+	! 第一个硬盘参数表的首地址是中断向量0x41的向量值, 第二个硬盘参数表紧接在第一个表的后面.
+	! 表长度为16个字节
 	mov	ax,#0x0000
 	mov	ds,ax
-	lds	si,[4*0x41]
+	lds	si,[4*0x41]	! 取中断向量0x41的值, 即hd0参数表的地址到ds:si
 	mov	ax,#INITSEG
 	mov	es,ax
 	mov	di,#0x0080
 	mov	cx,#0x10
+	! ds:si存放了0x0:0x41*4处的内容，即hd0的参数表首地址, 目的地es:di为0x9000:0x0080，共传送0x10即16字节
 	rep
 	movsb
 
@@ -84,20 +93,25 @@ novga:	mov	[14],ax
 
 	mov	ax,#0x0000
 	mov	ds,ax
-	lds	si,[4*0x46]
+	lds	si,[4*0x46]	! 取中断向量0x46的值, 即hd1参数表的地址到ds:si
 	mov	ax,#INITSEG
 	mov	es,ax
 	mov	di,#0x0090
 	mov	cx,#0x10
+	! ds:si存放了0x0:0x46*4处的内容，即hd1的参数表首地址, 目的地es:di为0x9000:0x0090，共传送0x10即16字节
 	rep
 	movsb
 
 ! Check that there IS a hd1 :-)
-
+	! TODO, 检查系统是否有第2个硬盘
+	! 利用BIOS中断0x13，功能号0x15，取盘类型功能
+	! 输入: dl=驱动器号(0x8x是硬盘, 0x80指第一个硬盘, 0x81指第二个硬盘)
+	! 输出: ah=类型码: 00代表没有这个盘, CF置位; 01代表是软驱, 没有change-line支持;
+	!		   02代表是软驱(或其他可移动设备), 有change-line支持; 03代表硬盘
 	mov	ax,#0x01500
 	mov	dl,#0x81
 	int	0x13
-	jc	no_disk1
+	jc	no_disk1	! CF置位表示没有这个盘
 	cmp	ah,#3
 	je	is_disk1
 no_disk1:
@@ -106,27 +120,31 @@ no_disk1:
 	mov	di,#0x0090
 	mov	cx,#0x10
 	mov	ax,#0x00
+	! stosb把ax(0x0)的内容填充到es:di(0x9000:0090)处，共填充16字节, 即把hd1的参数表值清零
 	rep
 	stosb
 is_disk1:
 
 ! now we want to move to protected mode ...
-
+	! 准备进入保护模式, 从此开始不允许中断
 	cli			! no interrupts allowed !
 
 ! first we move the system to it's rightful place
-
+	! bootsect会把system模块读到0x10000(64K)处，由于当时假设system模块最大长度不会超过0x80000(512KB)
+	! 即末端不会超过内存地址0x90000，所以bootsect会把自己移动到0x90000开始的地方，并把setup加载在他
+	! 后面.
 	mov	ax,#0x0000
 	cld			! 'direction'=0, movs moves forward
 do_move:
 	mov	es,ax		! destination segment
-	add	ax,#0x1000
+	add	ax,#0x1000	! 每移动64KB后ax在此都会加0x1000，当移动了8次之后就跳到end_move了
 	cmp	ax,#0x9000
 	jz	end_move
 	mov	ds,ax		! source segment
 	sub	di,di
 	sub	si,si
 	mov 	cx,#0x8000
+	! 将ds:si(0x1000:0)处内容移动到es:di(0x0:0)处, 每次共移动0x8000*2个字节(64KB)
 	rep
 	movsw
 	jmp	do_move
@@ -135,19 +153,29 @@ do_move:
 
 end_move:
 	mov	ax,#SETUPSEG	! right, forgot this at first. didn't work :-)
-	mov	ds,ax
-	lidt	idt_48		! load idt with 0,0
-	lgdt	gdt_48		! load gdt with whatever appropriate
-
+	mov	ds,ax		! ds指向本程序(setup)段
+				! idtr和gdtr的0-15位是Limit, 16-47位为Base Address
+	lidt	idt_48		! load idt with 0,0, 加载idtr寄存器
+				! idt_48定义为0,0
+				!  .word   0   ! idt limit=0
+				!  .word   0,0 ! idt base=0L
+	lgdt	gdt_48		! load gdt with whatever appropriate, 加载gdtr寄存器, gtd_48定义为
+				! gdt_48:
+				!  .word   0x800       ! gdt limit=2048, 256 GDT entries
+				!		       ! 每个gdt全局描述符表项大小为8个字节
+				!  .word   512+gdt,0x9 ! gdt base = 0X9xxxx
+				!                      ! 0x9<<4 + (512+gdt)因为setup在bootsect之后
+				!		       ! bootsect为512字节, 所以这里要加上512
 ! that was painless, now we enable A20
-
-	call	empty_8042
-	mov	al,#0xD1		! command write
+! 为了能够访问1MB以上的物理内存，需要首先打开A20地址线
+	call	empty_8042		! 测试8042状态寄存器，等待输入缓冲器空.
+					! 只有在输入缓冲器空时才可以对其执行写命令.
+	mov	al,#0xD1		! command write, 0xD1命令码，表示要写数据到8042的P2端口.P2端口位1用于A20线选通
 	out	#0x64,al
-	call	empty_8042
-	mov	al,#0xDF		! A20 on
-	out	#0x60,al
-	call	empty_8042
+	call	empty_8042		! 等待输入缓冲器空，看命令是否被接受
+	mov	al,#0xDF		! A20 on，打开A20地址线
+	out	#0x60,al		! 数据写到0x60端口.
+	call	empty_8042		! 若此时输入缓冲器为空, 则表示A20线已经选通
 
 ! well, that went ok, I hope. Now we have to reprogram the interrupts :-(
 ! we put them right after the intel-reserved hardware interrupts, at
@@ -156,33 +184,34 @@ end_move:
 ! rectify it afterwards. Thus the bios puts interrupts at 0x08-0x0f,
 ! which is used for the internal hardware interrupts as well. We just
 ! have to reprogram the 8259's, and it isn't fun.
-
+! 0x00eb是近跳转的机器码，可以提供7-10个时钟周期数
+! 8259芯片主片端口是0x20-0x21，从片端口是0xA0-0xA1. 输出值0x11表示初始化命令开始
 	mov	al,#0x11		! initialization sequence
 	out	#0x20,al		! send it to 8259A-1
 	.word	0x00eb,0x00eb		! jmp $+2, jmp $+2
 	out	#0xA0,al		! and to 8259A-2
 	.word	0x00eb,0x00eb
 	mov	al,#0x20		! start of hardware int's (0x20)
-	out	#0x21,al
+	out	#0x21,al		! 主8259a的irq0对应于0x20(irq32)
 	.word	0x00eb,0x00eb
 	mov	al,#0x28		! start of hardware int's 2 (0x28)
-	out	#0xA1,al
+	out	#0xA1,al		! 从8259a的irq0对应于0x28(irq40)
 	.word	0x00eb,0x00eb
 	mov	al,#0x04		! 8259-1 is master
-	out	#0x21,al
+	out	#0x21,al		! IR2级联从片
 	.word	0x00eb,0x00eb
 	mov	al,#0x02		! 8259-2 is slave
-	out	#0xA1,al
+	out	#0xA1,al		! 从片连的主片的IR号(IR2)
 	.word	0x00eb,0x00eb
 	mov	al,#0x01		! 8086 mode for both
-	out	#0x21,al
+	out	#0x21,al		! 80x86模式
 	.word	0x00eb,0x00eb
-	out	#0xA1,al
+	out	#0xA1,al		! 80x86模式
 	.word	0x00eb,0x00eb
 	mov	al,#0xFF		! mask off all interrupts for now
-	out	#0x21,al
+	out	#0x21,al		! 屏蔽主芯片所有中断请求
 	.word	0x00eb,0x00eb
-	out	#0xA1,al
+	out	#0xA1,al		! 屏蔽从芯片所有中断请求
 
 ! well, that certainly wasn't fun :-(. Hopefully it works, and we don't
 ! need no steenking BIOS anyway (except for the initial loading :-).
@@ -193,9 +222,28 @@ end_move:
 ! things as simple as possible, we do no register set-up or anything,
 ! we let the gnu-compiled 32-bit programs do that. We just jump to
 ! absolute address 0x00000, in 32-bit protected mode.
-
+! lmsw用于加载机器状态字,也称为控制寄存器CR0，位0置1(PE位)将导致CPU切换到保护模式,
+! 并且处于特权级0中，即当前的CPL=0，此时段寄存器仍然指向与实地址模式中相同的线性地
+! 址处(实模式下线性地址与物理地址相同). 设置该位后，随后的一条指令必须是一条段间跳转
+! 指令用于刷新CPU当前的指令队列.因为CPU是在执行一条指令之前就已经从内存读取该指令并
+! 对其进行解码. 然后在进入保护模式以后那些属于实模式的预先取得的指令信息就变得不再有效.
+! 而一条段间跳转指令就会刷新CPU当前的指令队列，即丢弃这些无效的信息. 另外, 在Intel公司手册
+! 上建议80386或以上CPU应该使用指令"mov cr0, ax"切换到保护模式.lmsw指令仅用于兼容以前的286CPU
 	mov	ax,#0x0001	! protected mode (PE) bit
 	lmsw	ax		! This is it!
+
+! 选择子图示:
+!  |15                         3| 2  | 1  0|
+!  -----------------------------------------
+!  |       描述符号索引         | TI | RPL |
+!  -----------------------------------------
+! RPL(Requested Privilege Level): 请求特权级，用于特权检查。
+!
+! TI(Table Indicator): 引用描述符表指示位
+!       TI=0 指示从全局描述符表GDT中读取描述符;
+!       TI=1 指示从局部描述符表LDT中读取描述符.
+!
+
 	jmpi	0,8		! jmp offset 0 of segment 8 (cs)
 
 ! This routine checks that the keyboard command queue is empty
@@ -563,7 +611,102 @@ docr:	push	ax
 	pop	cx
 	pop	ax
 	ret	
-	
+! 数据段描述符
+! |31          24| 23| 22| 21| 20|19    16| 15|14 13| 12|11            8|7              0|
+! ----------------------------------------------------------------------------------------
+! |     基地址   |   |   |   | A | 段限长 |   |     |   |      TYPE     |     基地址     |
+! |              | G | B | 0 | V |        | P | DPL | 1 |               |        	 |
+! |  Base 31..24 |   |   |   | L | 19..16 |   |     |   | 0 | E | W | A |  Base 23..16   |
+! ----------------------------------------------------------------------------------------
+! |              基地址                   |               段限长                         |
+! |                                       |                                              |
+! |         Base Address 15..0            |         Segment Limit 15..0                  |
+! ----------------------------------------------------------------------------------------
+!
+! 代码段描述符
+! |31          24| 23| 22| 21| 20|19    16| 15|14 13| 12|11            8|7              0|
+! ----------------------------------------------------------------------------------------
+! |     基地址   |   |   |   | A | 段限长 |   |     |   |      TYPE     |     基地址     |
+! |              | G | B | 0 | V |        | P | DPL | 1 |               |        	 |
+! |  Base 31..24 |   |   |   | L | 19..16 |   |     |   | 1 | C | R | A |  Base 23..16   |
+! ----------------------------------------------------------------------------------------
+! |              基地址                   |               段限长                         |
+! |                                       |                                              |
+! |         Base Address 15..0            |         Segment Limit 15..0                  |
+! ----------------------------------------------------------------------------------------
+!
+!  说明:
+!
+! (1) P:    存在(Present)位。
+!               P=1 表示描述符对地址转换是有效的，或者说该描述符所描述的段存在，即在内存中；
+!               P=0 表示描述符对地址转换无效，即该段不存在。使用该描述符进行内存访问时会引起异常。
+!
+! (2) DPL:  表示描述符特权级(Descriptor Privilege level)，共2位。它规定了所描述段的特权级，用于特权检查，以决定对该段>能否访问。
+!
+! (3) S:   说明描述符的类型。
+!               对于存储段描述符而言，S=1，以区别与系统段描述符和门描述符(S=0)。
+!
+! (4) TYPE: 说明存储段描述符所描述的存储段的具体属性。
+!
+!       数据段类型      类型值          说明
+!                       ----------------------------------
+!                       0               只读
+!                       1               只读、已访问
+!                       2               读/写
+!                       3               读/写、已访问
+!                       4               只读、向下扩展
+!                       5               只读、向下扩展、已访问
+!                       6               读/写、向下扩展
+!                       7               读/写、向下扩展、已访问
+!
+!                       类型值          说明
+!       代码段类型      ----------------------------------
+!                       8               只执行
+!                       9               只执行、已访问
+!                       A               执行/读
+!                       B               执行/读、已访问
+!                       C               只执行、一致码段
+!                       D               只执行、一致码段、已访问
+!                       E               执行/读、一致码段
+!                       F               执行/读、一致码段、已访问
+!       系统段类型      类型编码        说明
+!                       ----------------------------------
+!                       0               <未定义>
+!                       1               可用286TSS
+!                       2               LDT
+!                       3               忙的286TSS
+!                       4               286调用门
+!                       5               任务门
+!                       6               286中断门
+!                       7               286陷阱门
+!                       8               未定义
+!                       9               可用386TSS
+!                       A               <未定义>
+!                       B               忙的386TSS
+!                       C               386调用门
+!                       D               <未定义>
+!                       E               386中断门
+!                       F               386陷阱门
+!
+! (5) G:    段界限粒度(Granularity)位。
+!               G=0 表示界限粒度为字节；
+!               G=1 表示界限粒度为4K 字节。
+!           注意，界限粒度只对段界限有效，对段基地址无效，段基地址总是以字节为单位。
+!
+! (6) D:    D位是一个很特殊的位，在描述可执行段、向下扩展数据段或由SS寄存器寻址的段(通常是堆栈段)的三种描述符中的意义>各不相同。
+!           (1) 在描述可执行段的描述符中，D位决定了指令使用的地址及操作数所默认的大小。
+!               ① D=1表示默认情况下指令使用32位地址及32位或8位操作数，这样的代码段也称为32位代码段；
+!               ② D=0 表示默认情况下，使用16位地址及16位或8位操作数，这样的代码段也称为16位代码段，它与80286兼容。可以使用地址大
+!                 小前缀和操作数大小前缀分别改变默认的地址或操作数的大小。
+!           (2) 在向下扩展数据段的描述符中，D位决定段的上部边界。
+!               ① D=1表示段的上部界限为4G；
+!               ② D=0表示段的上部界限为64K，这是为了与80286兼容。
+!           (3 )在描述由SS寄存器寻址的段描述符中，D位决定隐式的堆栈访问指令(如PUSH和POP指令)使用何种堆栈指针寄存器。
+!               ① D=1表示使用32位堆栈指针寄存器ESP；
+!               ② D=0表示使用16位堆栈指针寄存器SP，这与80286兼容。
+!
+! (7) AVL:  软件可利用位。80386对该位的使用未左规定，Intel公司也保证今后开发生产的处理器只要与80386兼容，就不会对该位的使用做任何定义或规定。
+!
 gdt:
 	.word	0,0,0,0		! dummy
 
