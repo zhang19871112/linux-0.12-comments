@@ -19,12 +19,19 @@
 
 /* 
  * The timezone where the local system is located.  Used as a default by some
- * programs who obtain this value by using gettimeofday.
+ * programs who obtain this value by using gettimeofday. 本系统所在的时区。作为
+ * 某些程序使用gettimeofday系统调用获取时区的默认值
+ * 时区结构timezone第一个字段(tz_minuteswest)表示距格林尼治标准时间GMT以西的分钟
+ * 数，第2个字段(tz_dsttime)是夏令时DST(Daylight Saving Time)调整类型。该结构定义
+ * 在time.h中
  */
 struct timezone sys_tz = { 0, 0};
 
+/* 根据进程号pgrp取得进程组所属会话号 */
 extern int session_of_pgrp(int pgrp);
 
+/* 返回日期和时间(ftime - Fetch time)
+ * 一下返回值是-ENOSYS的系统调用函数均表示在本版本内核中还未实现 */
 int sys_ftime()
 {
 	return -ENOSYS;
@@ -35,21 +42,25 @@ int sys_break()
 	return -ENOSYS;
 }
 
+/* 用于当前进程对子进程进行调试 */
 int sys_ptrace()
 {
 	return -ENOSYS;
 }
 
+/* 改变并打印终端行设置 */
 int sys_stty()
 {
 	return -ENOSYS;
 }
 
+/* 取终端行设置信息 */
 int sys_gtty()
 {
 	return -ENOSYS;
 }
 
+/* 修改文件名 */
 int sys_rename()
 {
 	return -ENOSYS;
@@ -69,7 +80,16 @@ int sys_prof()
  *
  * The general idea is that a program which uses just setregid() will be
  * 100% compatible with BSD.  A program which uses just setgid() will be
- * 100% compatible with POSIX w/ Saved ID's. 
+ * 100% compatible with POSIX w/ Saved ID's. 以下是BSD形式的实现，没有考虑
+ * 保存的gid(saved git或sgid)，除了当你设置了有效的gid(effective git或egid)
+ * 时，保存gid也会被设置，这使得一个使用setgid的程序可以完全放弃其特权。
+ * 当你在对一个程序进行安全审计时，这通常是一种很好的处理方法。
+ * 最基本的考虑是一个使用setregid()的程序将会与BSD系统100%兼容，而一个使用
+ * setgid()和保存的gid的程序将会与POSIX 100%兼容
+ *
+ * 设置当前任务的实际以及/或者有效组ID(gid)，如果任务没有超级用户特权，那么只能
+ * 呼唤其实际组ID和有效组ID，如果任务具有超级用户权限，就能任意设置有效的和实际
+ * 的组ID。保留的gid(saved git)被设置成与有效gid，实际组ID是指进程当前的gid
  */
 int sys_setregid(int rgid, int egid)
 {
@@ -93,7 +113,13 @@ int sys_setregid(int rgid, int egid)
 }
 
 /*
- * setgid() is implemeneted like SysV w/ SAVED_IDS 
+ * setgid() is implemeneted like SysV w/ SAVED_IDS
+ * setgid()的实现与具有SAVED_IDS的SYSV实现方法相似
+ *
+ * 设置进程组号(git)。如果任务没有超级用户特权，它可以使用setgid()将其
+ * 有效gid(effective gid)设置成保留gid(saved gid)或其实际gid(real gid)。
+ * 如果任务有超级用户特权，则实际gid、有效gid和保留gid都被设置成参数指定
+ * 的gid
  */
 int sys_setgid(int gid)
 {
@@ -106,11 +132,13 @@ int sys_setgid(int gid)
 	return 0;
 }
 
+/* 打开或关闭记账功能 */
 int sys_acct()
 {
 	return -ENOSYS;
 }
 
+/* 映射任意物理内存到进程的虚拟地址空间 */
 int sys_phys()
 {
 	return -ENOSYS;
@@ -131,14 +159,19 @@ int sys_ulimit()
 	return -ENOSYS;
 }
 
+/* 返回从1970年1月1日00:00:00 GMT 开始计时的时间值(秒)。如果tloc不为null
+ * 则时间值也存储在那里
+ * 由于参数是一个指针，而其所指位置在用户空间，因此需要使用函数put_fs_long()
+ * 来访问该值。在进入内核中运行时，段寄存器fs被默认的指向当前用户数据空间。
+ * 因此该函数就可以利用fs来访问用户空间的值 */
 int sys_time(long * tloc)
 {
 	int i;
 
 	i = CURRENT_TIME;
 	if (tloc) {
-		verify_area(tloc,4);
-		put_fs_long(i,(unsigned long *)tloc);
+		verify_area(tloc,4);	/* 验证内存容量是否足够(这里是4个字节) */
+		put_fs_long(i,(unsigned long *)tloc);	/* 放入用户数据读tloc处 */
 	}
 	return i;
 }
@@ -155,6 +188,11 @@ int sys_time(long * tloc)
  * The general idea is that a program which uses just setreuid() will be
  * 100% compatible with BSD.  A program which uses just setuid() will be
  * 100% compatible with POSIX w/ Saved ID's. 
+ * 无特权的用户可以见实际的uid(readluid)改成有效的uid(effective)，反之亦然
+ * 当你设置有效的uid时，同时也设置了保存的uid。这使得一个使用setuid的程序
+ * 可以完全放弃其特权。当你在对一个程序进行安全审计时，这通常是一种很好的处理
+ * 方法。最基本的考虑是一个使用setreuid()的程序将会与BSD系统100%兼容。而一个使
+ * 用setuid()和保存的gid程序将会与POSIX 100%的兼容
  */
 int sys_setreuid(int ruid, int euid)
 {
@@ -192,6 +230,18 @@ int sys_setreuid(int ruid, int euid)
  * in the POSIX commmittee and/or USG.  Note that the BSD-style setreuid()
  * will allow a root program to temporarily drop privileges and be able to
  * regain them by swapping the real and effective uid.  
+ * setuid()的实现与具有SAVED_IDS的SYSV的实现方法相似
+ * 请注意使用SAVED_ID的setuid()在某些方面是不完善的，例如，一个使用setuid的
+ * 超级用户程序sendmail就做不到把其uid设置成一个普通用户的uid，然后再交换回
+ * 来，因为如果你是一个超级用户，setuid()也同时会设置保存的uid。如果你不喜欢
+ * 这样的做法话，就责怪POSIX组委会以及/或者USG中的聪明人吧。不过请注意BSD形
+ * 式的setreuid()实际能够允许一个超级用户程序临时放弃特权，并且能通过交换实
+ * 际的和有效的uid而再次获得特权
+ *
+ * 设置任务用户ID(uid)。如果任务没有超级用户特权，它可以使用setuid()将其有效
+ * 的uid(effective uid)设置成其保存的uid(saved uid)或其实际的uid(real uid)
+ * 如果任务有超级用户特权，则实际的uid、有效的uid和保存的uid都会被设置成参数
+ * 指定的uid
  */
 int sys_setuid(int uid)
 {
@@ -204,15 +254,25 @@ int sys_setuid(int uid)
 	return(0);
 }
 
+/* 设置系统开机时间，参数tptr是从1970年1月1日00:00:00 GMT开始计时的时间值(秒)
+ * 调用进程必须具有超级用户权限。其中HZ=100，是内核系统运行频率
+ * 由于参数是一个指针，而其所指位置在用户空间，因此需要使用函数get_fs_long()来
+ * 访问该值。在进入内核中运行时，段寄存器fs被默认地指向当前用户数据空间，因此
+ * 该函数就可以利用fs来访问用户空间的值
+ * 函数参数提供的当前时间值减去系统已经运行的时间秒值(jiffies/HZ)即开机时间秒值 */
 int sys_stime(long * tptr)
 {
-	if (!suser())
+	if (!suser())	/* 如果不是超级用户则出错返回(许可) */
 		return -EPERM;
 	startup_time = get_fs_long((unsigned long *)tptr) - jiffies/HZ;
 	jiffies_offset = 0;
 	return 0;
 }
 
+/* 获取当前任务运行时间统计值
+ * 在tbuf所指用户数据空间处返回tms结构的任务运行时间统计值。tms结构中包括进程用户
+ * 运行时间、内核(系统)时间、子进程用户运行时间、子进程系统运行时间。函数返回值
+ * 是系统运行到当前的滴答数 */
 int sys_times(struct tms * tbuf)
 {
 	if (tbuf) {
@@ -225,12 +285,17 @@ int sys_times(struct tms * tbuf)
 	return jiffies;
 }
 
+/* 当参数end_data_seg数值合理，并且系统确实有足够的内存，而且进程没有超越其最大数据
+ * 段大小时，该函数设置数据末尾为end_data_seg指定的值。该值必须大于代码结尾并且要小于
+ * 堆栈结尾16KB。返回值是数据段的新结尾值(如果返回值与要求值不同，则表明有错误发生)。
+ * 该函数并不被用户直接调用，而让libc库函数进行包装，并且返回值也不一样 */
 int sys_brk(unsigned long end_data_seg)
 {
+	/* 如果参数值大于代码结尾，并且小于(堆栈-16KB)，则设置新数据段结尾值 */
 	if (end_data_seg >= current->end_code &&
 	    end_data_seg < current->start_stack - 16384)
 		current->brk = end_data_seg;
-	return current->brk;
+	return current->brk;	/* 返回进程当前的数据段结尾值 */
 }
 
 /*
@@ -241,17 +306,32 @@ int sys_brk(unsigned long end_data_seg)
  * OK, I think I have the protection semantics right.... this is really
  * only important on a multi-user system anyway, to make sure one user
  * can't send a signal to a process owned by another.  -TYT, 12/12/91
+ *
+ * 设置指定进程pid的进程组号为pgid
+ * 参数pid是指定进程的进程号。如果它为0，则让pid等于当前进程的进程号。参数
+ * pgid是指定的进程组号。如果它为0，则让它等于进程pid的进程组号。如果该函数
+ * 用于将进程从一个进程组移到另一个进程组，则这两个进程组必须属于同一个会话
+ * 在这种情况下，参数pgid指定了要加入的现有进程组ID，此时该组的会话ID必须于
+ * 将要加入进程的相同
  */
 int sys_setpgid(int pid, int pgid)
 {
 	int i; 
-
+	/* 如果参数pid为0，则pid取值为当前进程的进程号pid，如果参数pgid为0，
+	 * 则pgid也取值为当前进程的pid。若pgid小于0，则返回无效错误码 */
 	if (!pid)
 		pid = current->pid;
 	if (!pgid)
 		pgid = current->pid;
 	if (pgid < 0)
 		return -EINVAL;
+	/* 扫描任务数组，查找指定进程号pid的任务，如果找到了进程号是pid的进程，并且
+	 * 该进程的父进程就是当前进程或者该进程就是当前进程，那么若该任务已经是会话
+	 * 首领，则出错返回
+	 * 若该任务的会话号(sessions)与当前进程的不同，或者指定的进程组号pgid与pid不同
+	 * 并且pgid进程组所属会话号与当前进程所属会话号不同，则也出错返回。否则把查找
+	 * 到的进程的pgrp设置为pgid，并返回0，若没有找到指定pid的进程，则返回进程不存在
+	 * 出错码 */
 	for (i=0 ; i<NR_TASKS ; i++)
 		if (task[i] && (task[i]->pid == pid) &&
 		    ((task[i]->p_pptr == current) || 
@@ -268,28 +348,44 @@ int sys_setpgid(int pid, int pgid)
 	return -ESRCH;
 }
 
+/* 返回当前进程的进程组号。与getpgid(0)等同 */
 int sys_getpgrp(void)
 {
 	return current->pgrp;
 }
 
+/* 创建一个会话(session)(即设置其leader=1)，并且设置其会话号=其组号=其进程号
+ * 如果当前进程已是会话首领并且不是超级用户，则出错返回，否则设置当前进程为
+ * 新会话首领(leader=1)，并且设置当前进程会话号session和组号pgrp都等于进程号
+ * pid，而且设置当前进程没有控制终端，最后系统调用返回会话号 */
 int sys_setsid(void)
 {
 	if (current->leader && !suser())
 		return -EPERM;
 	current->leader = 1;
 	current->session = current->pgrp = current->pid;
-	current->tty = -1;
+	current->tty = -1;	/* 表示当前进程没有控制终端 */
 	return current->pgrp;
 }
 
 /*
  * Supplementary group ID's
+ * 进程的其他用户组号
+ * 取当前进程其他辅助用户组号
+ * 任务数据结构中groups[]数组保存着进程同时所属的多个用户组号。该数组共NGROUPS个项
+ * 若某项的值是NOGROUP(即-1)，则表示从该项开始以后所有项都空闲。否则数组项中保存的
+ * 是用户组号。
+ * 参数gidsetsize是获取的用户组号个数，grouplist是存储这些用户组号的用户空间缓存
  */
 int sys_getgroups(int gidsetsize, gid_t *grouplist)
 {
 	int	i;
-
+	/* 首先验证grouplist指针所指的用户缓存空间是否足够，然后从当前进程结构的
+	 * groups[]数组中逐个取得用户组号并复制到用户缓存中。在复制过程中，如果
+	 * groups[]中的项数大于给定的参数gidsetsize所指定的个数，则表示用户给出
+	 * 的缓存太小，不能容下当前进程所有组号，因此此次取组号操作会出错返回，
+	 * 若复制过程正常，则函数最后会返回复制的用户组号个数(gidsetsize - gid
+	 * set size, 用户组号集大小) */
 	if (gidsetsize)
 		verify_area(grouplist, sizeof(gid_t) * gidsetsize);
 
@@ -301,13 +397,18 @@ int sys_getgroups(int gidsetsize, gid_t *grouplist)
 			put_fs_word(current->groups[i], (short *) grouplist);
 		}
 	}
-	return(i);
+	return(i);	/* 返回实际含有的用户组号个数 */
 }
 
+/* 设置当前进程同时所属的其他辅助用户组号
+ * 参数gidsetsize是将设置的用户组号个数，grouplist是含有用户组号的用户空间缓存 */
 int sys_setgroups(int gidsetsize, gid_t *grouplist)
 {
 	int	i;
-
+	/* 首先查权限和参数的有效性。只有超级用户可以修改或设置当前进程的辅助用户组
+	 * 号，而且设置的项数不能超过进程的groups[NOGROUP]数组的容量。然后从用户缓冲
+	 * 中逐个复制用户组号，共gidsetsize个，如果复制的个数没有填满groups[]，则在
+	 * 随后一项上填上值为-1的项(NOGROUP)，最后函数返回0 */
 	if (!suser())
 		return -EPERM;
 	if (gidsetsize > NGROUPS)
@@ -320,10 +421,14 @@ int sys_setgroups(int gidsetsize, gid_t *grouplist)
 	return 0;
 }
 
+/* 检查当前进程是否在指定的用户组grp中。是则返回1，否则返回0 */
 int in_group_p(gid_t grp)
 {
 	int	i;
-
+	/* 如果当前进程的有效组号就是grp，则表示进程属于grp进程组。函数
+	 * 返回1。否则就在进程的辅助用户组数组中扫描是否有grp进程组号，若有
+	 * 则函数也返回1，若扫描到值为NOGROUP的项，表示已扫描完全部有效项而
+	 * 没有发现匹配的组号，因此函数返回0 */
 	if (grp == current->egid)
 		return 1;
 
@@ -336,10 +441,15 @@ int in_group_p(gid_t grp)
 	return 0;
 }
 
+/* utsname结构含有一些字符串字段。用于保存系统的名称。其中包含5个字段，分别是：
+ * 当前操作系统的名称、网络节点名称(主机名)、当前操作系统发行级别、操作系统版本
+ * 号以及系统运行的硬件类型名词。这里使用include/linux/config.h文件中的常数设置了
+ * 他们的默认值。分别是"Linux", "none", "0", "0.12", "i386" */
 static struct utsname thisname = {
 	UTS_SYSNAME, UTS_NODENAME, UTS_RELEASE, UTS_VERSION, UTS_MACHINE
 };
 
+/* 获取系统名称等信息 */
 int sys_uname(struct utsname * name)
 {
 	int i;
@@ -353,11 +463,14 @@ int sys_uname(struct utsname * name)
 
 /*
  * Only sethostname; gethostname can be implemented by calling uname()
+ * 通过调用uname()只能实现sethostname和gethostname
+ * 设置系统主机名(系统的网络节点名)
+ * 参数name指针指向用户数据区中含有主机名字符串的缓冲区，len是主机名字符串长度
  */
 int sys_sethostname(char *name, int len)
 {
 	int	i;
-	
+	/* 系统主机名只能由超级用户设置或修改，并且主机名长度不能超过最大长度MAXHOSTNAMELEN */
 	if (!suser())
 		return -EPERM;
 	if (len > MAXHOSTNAMELEN)
@@ -366,31 +479,53 @@ int sys_sethostname(char *name, int len)
 		if ((thisname.nodename[i] = get_fs_byte(name+i)) == 0)
 			break;
 	}
+	/* 复制完后，如果用户提供的字符串中没有包含NULL字符，那么若复制的主机名长度
+	 * 还没有超过MAXHOSTNAMELEN，则在主机名字符串后添加一个NULL。若已经填满
+	 * MAXHOSTNAMELEN个字符，则把最后一个字符改成NULL字符 */
 	if (thisname.nodename[i]) {
 		thisname.nodename[i>MAXHOSTNAMELEN ? MAXHOSTNAMELEN : i] = 0;
 	}
 	return 0;
 }
 
+/* 取当前进程指定资源的界限值
+ * 进程的任务结构中定义有一个数组rlim[RLIM_NLIMITS], 用于控制进程使用系统资源的界限
+ * 数组每个项是一个rlimit结构，其中包含两个字段。一个说明进程对指定资源的当前限制界
+ * 限(soft limit, 即软限制)，另一个说明系统对指定资源的最大限制界限(hard limit, 即
+ * 硬限制)。rlim[]数组的每一项对应系统对当前进程一种资源的界限信息. Linux0.12系统共
+ * 对6种资源规定了界限，即RLIM_NLIMITS=6.
+ * 参数resource指定我们咨询的资源名称，实际上它是任务数据结构中rlim[]数组的索引项值
+ * 参数rlim是指向rlimit结构的用户缓冲区指针，用于存放取得的资源界限信息。 */
 int sys_getrlimit(int resource, struct rlimit *rlim)
 {
+	/* 所咨询的资源resource实际上是进程任务结构中rlim[]数组的索引项值。该索引项
+	 * 值当然不能大于数组的最大项数RLIM_NLIMITS，在验证过rlim指针所指用户缓冲
+	 * 足够以后，这里就把参数指定的资源resource结构信息复制到用户缓冲中，并返回0 */
 	if (resource >= RLIM_NLIMITS)
 		return -EINVAL;
 	verify_area(rlim,sizeof *rlim);
-	put_fs_long(current->rlim[resource].rlim_cur, 
+	put_fs_long(current->rlim[resource].rlim_cur, /* 当前(软)限制值 */
 		    (unsigned long *) rlim);
-	put_fs_long(current->rlim[resource].rlim_max, 
+	put_fs_long(current->rlim[resource].rlim_max, /* 系统(硬)限制值 */
 		    ((unsigned long *) rlim)+1);
 	return 0;	
 }
 
+/* 设置当前进程指定资源的界限值
+ * 参数resource指定我们咨询的资源名称，实际上它是任务数据结构中rlim[]数组的索引项值
+ * 参数rlim是指向rlimit结构的用户缓冲区指针，用于内核读取新的资源界限信息 */
 int sys_setrlimit(int resource, struct rlimit *rlim)
 {
 	struct rlimit new, *old;
-
+	/* 首先判断参数resource的有效性。然后先让rlimit结构指针old指项进程任务结构
+	 * 中指定资源的当前rlimit结构信息。接着把用户提供的资源界限信息复制到临时
+	 * rlimit结构new中。此时如果判断出new结构中的软界限值或硬界限值大于进程该
+	 * 资源原硬件界限值，并且当前不是超级用户的话，就返回许可错，否则表示new中
+	 * 信息合理或者进程是超级用户进程，则修改原进程指定资源信息等于new结构中的
+	 * 信息，并成功返回0 */
 	if (resource >= RLIM_NLIMITS)
 		return -EINVAL;
-	old = current->rlim + resource;
+	old = current->rlim + resource;	/* 即old = current->rlimt[resource] */
 	new.rlim_cur = get_fs_long((unsigned long *) rlim);
 	new.rlim_max = get_fs_long(((unsigned long *) rlim)+1);
 	if (((new.rlim_cur > old->rlim_max) ||
@@ -408,16 +543,33 @@ int sys_setrlimit(int resource, struct rlimit *rlim)
  * make sense to do this.  It will make moving the rest of the information
  * a lot simpler!  (Which we're not doing right now because we're not
  * measuring them yet).
+ *
+ * 把rusuage结构放进任务结构task_struct中是恰当的，除非它会使任务结构长度变得
+ * 非常大。在把任务结构移入内核malloc分配的内存中之后，这样做即使任务结构很大
+ * 也没有问题了。这将使得其余信息的移动变得非常方便!
+ *
+ * 获取指定进程的资源利用信息
+ * 本系统调用提供当前进程或其已终止的和等待着的子进程资源使用情况。如果参数who等于
+ * RUSAGE_SELF，则返回当前进程的资源利用信息。如果指定进程who是RUSAGE_CHILDREN，则
+ * 返回当前进程的已终止和等待着的子进程资源利用信息。符号常数RUSAGE_SELF和RUSAGE_CHILDREN
+ * 以及rusage结构都定义在include/sys/resource.h中
  */
 int sys_getrusage(int who, struct rusage *ru)
 {
 	struct rusage r;
 	unsigned long	*lp, *lpend, *dest;
 
+	/* 首先判断参数指定进程的有效性，如果who既不是RUSAGE_SELF(指定当前进程)，也不是
+	 * RUSAGE_CHILDREN(指定子进程)，则以无效参数码返回。否则在验证乐指针ru指定的用户
+	 * 缓冲区域后，把临时rusage结构区域r清零 */
 	if (who != RUSAGE_SELF && who != RUSAGE_CHILDREN)
 		return -EINVAL;
 	verify_area(ru, sizeof *ru);
 	memset((char *) &r, 0, sizeof(r));
+	/* 若参数who是RUSAGE_SELF，则复制当前进程资源利用信息到r结构中。若指定进程who是
+	 * RUSAGE_CHILDREN，则复制当前进程的已终止和等待着的子进程资源利用信息到临时rusuage
+	 * 结构r中。宏CT_TO_SECS和CT_TO_USECS用于把系统当前滴答数转换成用秒值加微妙值表示。
+	 * jiffies_offset是系统滴答数误差调整数 */
 	if (who == RUSAGE_SELF) {
 		r.ru_utime.tv_sec = CT_TO_SECS(current->utime);
 		r.ru_utime.tv_usec = CT_TO_USECS(current->utime);
@@ -429,6 +581,8 @@ int sys_getrusage(int who, struct rusage *ru)
 		r.ru_stime.tv_sec = CT_TO_SECS(current->cstime);
 		r.ru_stime.tv_usec = CT_TO_USECS(current->cstime);
 	}
+	/* 然后让lp指针指向r结构，lpend指向r结构末尾处，而dest指针指向用户空间中
+	 * 的ru结构。最后把r中信息复制到用户空间ru结构中，并返回0 */
 	lp = (unsigned long *) &r;
 	lpend = (unsigned long *) (&r+1);
 	dest = (unsigned long *) ru;
@@ -437,8 +591,14 @@ int sys_getrusage(int who, struct rusage *ru)
 	return(0);
 }
 
+/* 取得系统当前时间，并用指定格式返回
+ * timeval结构含有秒和微妙两个字段。timezone结构含有本地距格林尼治标准时间以西的分钟数
+ * 和夏令时间你调整类型(tz_dsttime)两个字段. (dst - Daylight Saving Time) */
 int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
 {
+	/* 如果参数给定的timeval结构指针不空，则在该结构中返回当前时间(秒值和微妙值)
+	 * 如果参数给定的用户数据空间中timezone结构的指针不空，则也返回该结构的信息
+	 * 程序中startup_time是系统开机时间(秒值) */
 	if (tv) {
 		verify_area(tv, sizeof *tv);
 		put_fs_long(startup_time + CT_TO_SECS(jiffies+jiffies_offset),
@@ -462,12 +622,24 @@ int sys_gettimeofday(struct timeval *tv, struct timezone *tz)
  * This should be done at boot time in the /etc/rc script, as
  * soon as possible, so that the clock can be set right.  Otherwise,
  * various programs will get confused when the clock gets warped.
+ *
+ * 在第一次设置时区时，我们会改变时钟值以让系统使用格林尼治标准时间(GMT)运行，
+ * 而非使用本地时间。推测起来说，如果某人设置了时区时间，那么我们就运行在程序
+ * 知晓时区时间的环境中，设置时区操作应该在系统启动阶段，尽快在/etc/rc脚本程序
+ * 中进行。这样时钟就可以设置正确。否则的话，若我们以后才设置时区而导致时钟时间
+ * 改变，可能会让一些程序的运行出现问题
+ *
+ * 设置系统当前时间。
+ * 参数tv是指向用户数据区中timeval结构信息的指针，参数tz是用户数据区中timezone结构
+ * 中指针。该操作需要超级用户权限，如果两者皆为空，则什么也不做，函数返回0
  */
 int sys_settimeofday(struct timeval *tv, struct timezone *tz)
 {
 	static int	firsttime = 1;
 	void 		adjust_clock();
-
+	/* 设置系统当前时间需要用户权限。如果tz指针不空，则设置系统时区信息，
+	 * 即复制用户timezone结构信息到系统中的sys_tz结构中，如果是第一次调
+	 * 用本系统调用并且参数tv指针不空，则调整系统时钟值 */
 	if (!suser())
 		return -EPERM;
 	if (tz) {
@@ -479,6 +651,10 @@ int sys_settimeofday(struct timeval *tv, struct timezone *tz)
 				adjust_clock();
 		}
 	}
+	/* 如果参数timeval结构指针tv不空，则用该结构信息设置系统时钟。首先
+	 * 从tv所指处获取以秒值(sec)加微妙值(usec)表示的系统时间，然后用秒
+	 * 值修改系统开机时间全局变量startup_time值，并用微妙值设置系统滴答
+	 * 误差值jiffies_offset */
 	if (tv) {
 		int sec, usec;
 
@@ -506,12 +682,18 @@ int sys_settimeofday(struct timeval *tv, struct timezone *tz)
  * is.  Blast it all.... the best thing to do not depend on the CMOS
  * clock at all, but get the time via NTP or timed if you're on a 
  * network....				- TYT, 1/1/92
+ *
+ * 把从CMOS中读取的时间调整为GMT时间值并保存，而非本地时间值
+ *
+ * 把系统启动时间调整为以GMT为标准的时间
+ * startup_time是秒值，因此这里需要把时区分钟值乘上60
  */
 void adjust_clock()
 {
 	startup_time += sys_tz.tz_minuteswest*60;
 }
 
+/* 设置当前进程创建文件属性屏蔽码为mask & 0777。并返回原屏蔽码 */
 int sys_umask(int mask)
 {
 	int old = current->umask;
